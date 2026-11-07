@@ -17,6 +17,6 @@ The script fetches PPSSPP, applies the patches in `patches/`, builds it and
 leaves the pkg in this directory.
 
 ## Usage
-- Put your games and bios on USB.
+- Put your games on USB.
 - Saves and settings are kept in `/temp0/ppsspp`.
 - Vulkan is the default graphics backend.
