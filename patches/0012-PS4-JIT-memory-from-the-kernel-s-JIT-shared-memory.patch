@@ -1,0 +1,153 @@
+From 46ef92e826e3db7420daeed0990f8adddac674f6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
+Date: Sat, 7 Nov 2026 19:52:10 +0000
+Subject: [PATCH 12/12] PS4: JIT memory from the kernel's JIT shared memory
+
+The PS5 doesn't run code a PS4 app writes in memory it mapped itself:
+the first jump into the JIT faulted there ("user read instruction,
+protection violation"). Create the code space with
+sceKernelJitCreateSharedMemory() instead and map it twice, executable
+and, through sceKernelJitCreateAliasOfSharedMemory(), writable, as the
+Switch does with jitCreate(). The executable view is placed next to the
+program, as AllocateExecutableMemory() does: code from the x86 JITs
+calls the program with 32-bit offsets.
+
+The app needs the JIT shared memory capabilities for this, which the
+PS4 homebrew SDK's elf2self gives it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P3uAWaEfvY2JvhAv7RuSyc
+---
+ Common/CodeBlock.h    |  6 +++-
+ Common/MemoryUtil.cpp | 72 +++++++++++++++++++++++++++++++++++++++++++
+ Common/MemoryUtil.h   |  7 +++++
+ 3 files changed, 84 insertions(+), 1 deletion(-)
+
+diff --git a/Common/CodeBlock.h b/Common/CodeBlock.h
+index 04642f1..2ca5d44 100644
+--- a/Common/CodeBlock.h
++++ b/Common/CodeBlock.h
+@@ -79,6 +79,8 @@ template<class T> class CodeBlock : public CodeBlockCommon, public T {
+ 
+ 		region = (u8 *)jitController.rx_addr;
+ 		writableRegion = (u8 *)jitController.rw_addr;
++#elif PPSSPP_PLATFORM(PS4)
++		AllocateJitMemory(region_size, &region, &writableRegion);
+ #else // PPSSPP_PLATFORM(SWITCH)
+ 		// The protection will be set to RW if PlatformIsWXExclusive.
+ 		region = (u8 *)AllocateExecutableMemory(region_size);
+@@ -151,7 +153,9 @@ template<class T> class CodeBlock : public CodeBlockCommon, public T {
+ 
+ 	// Call this when shutting down. Don't rely on the destructor, even though it'll do the job.
+ 	void FreeCodeSpace() {
+-#if !PPSSPP_PLATFORM(SWITCH)
++#if PPSSPP_PLATFORM(PS4)
++		FreeJitMemory(region, writableRegion, region_size);
++#elif !PPSSPP_PLATFORM(SWITCH)
+ 		ProtectMemoryPages(region, region_size, MEM_PROT_READ | MEM_PROT_WRITE);
+ 		FreeExecutableMemory(region, region_size);
+ #else // !PPSSPP_PLATFORM(SWITCH)
+diff --git a/Common/MemoryUtil.cpp b/Common/MemoryUtil.cpp
+index be2a14d..c7c31c7 100644
+--- a/Common/MemoryUtil.cpp
++++ b/Common/MemoryUtil.cpp
+@@ -279,6 +279,78 @@ void FreeExecutableMemory(void *ptr, size_t size) {
+ 	FreeMemoryPages(ptr, size);
+ }
+ 
++#if PPSSPP_PLATFORM(PS4)
++extern "C" int sceKernelJitCreateSharedMemory(const char *name, size_t len, int maxProt, int *fd);
++extern "C" int sceKernelJitCreateAliasOfSharedMemory(int fd, int maxProt, int *aliasFd);
++
++static size_t RoundJitSize(size_t size) {
++	return (size + 0x3FFF) & ~(size_t)0x3FFF;  // 16 KiB pages
++}
++
++bool AllocateJitMemory(size_t size, uint8_t **executable, uint8_t **writable) {
++	// Within 32-bit reach of the executable, as in AllocateExecutableMemory().
++	static uint8_t *map_hint = nullptr;
++	if (!map_hint) {
++		if ((uintptr_t)&hint_location > 0xFFFFFFFFULL)
++			map_hint = (uint8_t *)ppsspp_round_page(&hint_location) - 0x20000000;
++		else
++			map_hint = (uint8_t *)0x20000000;
++	}
++	size = RoundJitSize(size);
++
++	// The executable view first, then the writable alias.
++	int execFd = -1;
++	int writeFd = -1;
++	uint8_t *x = nullptr;
++	uint8_t *w = nullptr;
++	int ret = sceKernelJitCreateSharedMemory(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC, &execFd);
++	if (ret == 0) {
++		void *p = mmap(map_hint, size, PROT_READ | PROT_EXEC, MAP_SHARED, execFd, 0);
++		if (p != MAP_FAILED)
++			x = (uint8_t *)p;
++		ret = x ? sceKernelJitCreateAliasOfSharedMemory(execFd, PROT_READ | PROT_WRITE, &writeFd) : errno;
++	}
++	if (ret == 0) {
++		void *p = mmap(x + size, size, PROT_READ | PROT_WRITE, MAP_SHARED, writeFd, 0);
++		if (p != MAP_FAILED)
++			w = (uint8_t *)p;
++		else
++			ret = errno;
++	}
++	// The mappings keep the memory.
++	if (execFd >= 0)
++		close(execFd);
++	if (writeFd >= 0)
++		close(writeFd);
++
++	// The x86 JITs call into the program with 32-bit offsets.
++	ptrdiff_t distance = x ? x - (uint8_t *)&hint_location : 0;
++	bool inReach = distance > -0x70000000LL && distance < 0x70000000LL;
++	if (!x || !w || !inReach) {
++		if (x && w)
++			ERROR_LOG(Log::MemMap, "JIT memory at %p is out of reach of the program", x);
++		else
++			ERROR_LOG(Log::MemMap, "Failed to allocate JIT memory of %d bytes: %08x", (int)size, (uint32_t)ret);
++		if (x)
++			munmap(x, size);
++		if (w)
++			munmap(w, size);
++		return false;
++	}
++
++	map_hint = w + size;
++	*executable = x;
++	*writable = w;
++	return true;
++}
++
++void FreeJitMemory(uint8_t *executable, uint8_t *writable, size_t size) {
++	size = RoundJitSize(size);
++	munmap(executable, size);
++	munmap(writable, size);
++}
++#endif
++
+ void FreeAlignedMemory(void* ptr) {
+ 	if (!ptr)
+ 		return;
+diff --git a/Common/MemoryUtil.h b/Common/MemoryUtil.h
+index 00dd786..8ad0a40 100644
+--- a/Common/MemoryUtil.h
++++ b/Common/MemoryUtil.h
+@@ -40,6 +40,13 @@ bool PlatformIsWXExclusive();
+ void* AllocateExecutableMemory(size_t size);
+ void FreeExecutableMemory(void *ptr, size_t size);
+ 
++#ifdef __ORBIS__
++// The PS4's JIT memory: the same pages mapped twice, executable and writable.
++// The PS5 doesn't run code a PS4 app writes in memory it mapped itself.
++bool AllocateJitMemory(size_t size, uint8_t **executable, uint8_t **writable);
++void FreeJitMemory(uint8_t *executable, uint8_t *writable, size_t size);
++#endif
++
+ void* AllocateMemoryPages(size_t size, uint32_t memProtFlags);
+ // Note that on platforms returning PlatformIsWXExclusive, you cannot set a page to be both readable and writable at the same time.
+ bool ProtectMemoryPages(const void* ptr, size_t size, uint32_t memProtFlags);
+-- 
+2.43.0
+

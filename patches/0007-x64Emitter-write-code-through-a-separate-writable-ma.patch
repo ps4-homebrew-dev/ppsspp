@@ -1,0 +1,197 @@
+From 7dff128cdaf490743de5c536690438afc4325c9e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
+Date: Sat, 7 Nov 2026 19:52:10 +0000
+Subject: [PATCH 07/12] x64Emitter: write code through a separate writable
+ mapping
+
+SetCodePointer() takes the address code runs at and the one it's written
+through, as on ARM64, but the x86 emitter ignored the second. Write
+through it, and have the x86 JITs patch exits and the software
+renderer's prologs through writable pointers while computing jumps from
+the executable ones, as the ARM64 JIT does.
+
+Nothing changes where the two are the same. Where code may only run
+from memory that isn't writable (the PS5, for PS4 apps), the JITs can
+then use memory mapped twice.
+
+Tested on x86-64 Linux with the code space mapped twice (a memfd, read+
+exec and read+write): pspautotests' tests_good give the same results as
+before with the JIT and the IR JIT, and the GPU tests with the software
+renderer.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P3uAWaEfvY2JvhAv7RuSyc
+---
+ Common/x64Emitter.cpp               | 13 +++++++------
+ Common/x64Emitter.h                 | 12 ++++++++----
+ Core/MIPS/x86/Jit.cpp               |  4 ++--
+ Core/MIPS/x86/X64IRJit.cpp          |  4 ++--
+ GPU/Software/RasterizerRegCache.cpp |  4 ++--
+ 5 files changed, 21 insertions(+), 16 deletions(-)
+
+diff --git a/Common/x64Emitter.cpp b/Common/x64Emitter.cpp
+index 2dbe577..65c854f 100644
+--- a/Common/x64Emitter.cpp
++++ b/Common/x64Emitter.cpp
+@@ -96,6 +96,7 @@ enum NormalSSEOps
+ void XEmitter::SetCodePointer(u8 *ptr, u8 *writePtr)
+ {
+ 	code = ptr;
++	writableOffset_ = writePtr - ptr;
+ }
+ 
+ const u8 *XEmitter::GetCodePointer() const
+@@ -105,13 +106,13 @@ const u8 *XEmitter::GetCodePointer() const
+ 
+ u8 *XEmitter::GetWritableCodePtr()
+ {
+-	return code;
++	return code + writableOffset_;
+ }
+ 
+ void XEmitter::ReserveCodeSpace(int bytes)
+ {
+ 	for (int i = 0; i < bytes; i++)
+-		*code++ = 0xCC;
++		Write8(0xCC);
+ }
+ 
+ const u8 *XEmitter::AlignCode4()
+@@ -166,7 +167,7 @@ const u8 *XEmitter::NopAlignCode16() {
+ 		"\x66\x66\x66\x0f\x1f\x84\x00\x00\x00\x00\x00\x0f\x1f\x40\x00",
+ 	};
+ 
+-	memcpy(code, nopStrings[nops], nops);
++	memcpy(code + writableOffset_, nopStrings[nops], nops);
+ 	code += nops;
+ 	return code;
+ }
+@@ -532,14 +533,14 @@ void XEmitter::SetJumpTarget(const FixupBranch &branch)
+ 	{
+ 		s64 distance = (s64)(code - branch.ptr);
+ 		_assert_msg_(distance >= -0x80 && distance < 0x80, "Jump target too far away, needs force5Bytes = true");
+-		branch.ptr[-1] = (u8)(s8)distance;
++		branch.ptr[writableOffset_ - 1] = (u8)(s8)distance;
+ 	}
+ 	else if (branch.type == 1)
+ 	{
+ 		s64 distance = (s64)(code - branch.ptr);
+ 		_assert_msg_(distance >= -0x80000000LL && distance < 0x80000000LL, "Jump target too far away, needs indirect register");
+ 		const s32 distance32 = static_cast<s32>(distance);
+-		std::memcpy(branch.ptr - sizeof(s32), &distance32, sizeof(s32));
++		std::memcpy(branch.ptr + writableOffset_ - sizeof(s32), &distance32, sizeof(s32));
+ 	}
+ }
+ 
+@@ -2524,7 +2525,7 @@ void XEmitter::RDTSC() { Write8(0x0F); Write8(0x31); }
+ 
+ void XCodeBlock::PoisonMemory(int offset) {
+ 	// x86/64: 0xCC = breakpoint
+-	memset(region + offset, 0xCC, region_size - offset);
++	memset(GetWritablePtrFromCodePtr(region) + offset, 0xCC, region_size - offset);
+ }
+ 
+ }
+diff --git a/Common/x64Emitter.h b/Common/x64Emitter.h
+index f3ec30b..91cb247 100644
+--- a/Common/x64Emitter.h
++++ b/Common/x64Emitter.h
+@@ -360,6 +360,9 @@ class XEmitter
+ 	friend struct OpArg;  // for Write8 etc
+ private:
+ 	u8 *code;
++	// Where code is written, relative to where it runs. Zero unless the code
++	// space is mapped twice, writable and executable (see CodeBlock).
++	ptrdiff_t writableOffset_ = 0;
+ 	bool flags_locked;
+ 
+ 	void CheckFlags();
+@@ -389,14 +392,15 @@ class XEmitter
+ 	void WriteNormalOp(XEmitter *emit, int bits, NormalOp op, const OpArg &a1, const OpArg &a2);
+ 
+ protected:
+-	inline void Write8(u8 value)   {*code++ = value;}
+-	inline void Write16(u16 value) {std::memcpy(code, &value, sizeof(u16)); code += 2;}
+-	inline void Write32(u32 value) {std::memcpy(code, &value, sizeof(u32)); code += 4;}
+-	inline void Write64(u64 value) {std::memcpy(code, &value, sizeof(u64)); code += 8;}
++	inline void Write8(u8 value)   {code[writableOffset_] = value; code++;}
++	inline void Write16(u16 value) {std::memcpy(code + writableOffset_, &value, sizeof(u16)); code += 2;}
++	inline void Write32(u32 value) {std::memcpy(code + writableOffset_, &value, sizeof(u32)); code += 4;}
++	inline void Write64(u64 value) {std::memcpy(code + writableOffset_, &value, sizeof(u64)); code += 8;}
+ 
+ public:
+ 	XEmitter() { code = nullptr; flags_locked = false; }
+ 	XEmitter(u8 *code_ptr) { code = code_ptr; flags_locked = false; }
++	XEmitter(const u8 *code_ptr, u8 *writable_ptr) { SetCodePointer((u8 *)code_ptr, writable_ptr); flags_locked = false; }
+ 	virtual ~XEmitter() {}
+ 
+ 	void WriteModRM(int mod, int reg, int rm);
+diff --git a/Core/MIPS/x86/Jit.cpp b/Core/MIPS/x86/Jit.cpp
+index 6fddefd..437cc01 100644
+--- a/Core/MIPS/x86/Jit.cpp
++++ b/Core/MIPS/x86/Jit.cpp
+@@ -495,7 +495,7 @@ void Jit::LinkBlock(u8 *exitPoint, const u8 *checkedEntry) {
+ 	if (PlatformIsWXExclusive()) {
+ 		ProtectMemoryPages(exitPoint, 32, MEM_PROT_READ | MEM_PROT_WRITE);
+ 	}
+-	XEmitter emit(exitPoint);
++	XEmitter emit(GetCodePtrFromWritablePtr(exitPoint), exitPoint);
+ 	// Okay, this is a bit ugly, but we check here if it already has a JMP.
+ 	// That means it doesn't have a full exit to pad with INT 3.
+ 	bool prelinked = *emit.GetCodePointer() == 0xE9;
+@@ -519,7 +519,7 @@ void Jit::UnlinkBlock(u8 *checkedEntry, u32 originalAddress) {
+ 	// Send anyone who tries to run this block back to the dispatcher.
+ 	// Not entirely ideal, but .. pretty good.
+ 	// Spurious entrances from previously linked blocks can only come through checkedEntry
+-	XEmitter emit(checkedEntry);
++	XEmitter emit(GetCodePtrFromWritablePtr(checkedEntry), checkedEntry);
+ 	emit.MOV(32, MIPSSTATE_VAR(pc), Imm32(originalAddress));
+ 	emit.JMP(MIPSComp::jit->GetDispatcher(), true);
+ 	if (PlatformIsWXExclusive()) {
+diff --git a/Core/MIPS/x86/X64IRJit.cpp b/Core/MIPS/x86/X64IRJit.cpp
+index fbfcf9f..a7d678a 100644
+--- a/Core/MIPS/x86/X64IRJit.cpp
++++ b/Core/MIPS/x86/X64IRJit.cpp
+@@ -208,7 +208,7 @@ void X64JitBackend::OverwriteExit(int srcOffset, int len, int block_num) {
+ 			ProtectMemoryPages(writable, len, MEM_PROT_READ | MEM_PROT_WRITE);
+ 		}
+ 
+-		XEmitter emitter(writable);
++		XEmitter emitter(GetBasePtr() + srcOffset, writable);
+ 		emitter.JMP(GetBasePtr() + nativeBlock->checkedOffset, true);
+ 		int bytesWritten = (int)(emitter.GetWritableCodePtr() - writable);
+ 		_dbg_assert_(bytesWritten <= MIN_BLOCK_EXIT_LEN);
+@@ -332,7 +332,7 @@ void X64JitBackend::InvalidateBlock(IRBlockCache *irBlockCache, int block_num) {
+ 			ProtectMemoryPages(writable, MIN_BLOCK_NORMAL_LEN, MEM_PROT_READ | MEM_PROT_WRITE);
+ 		}
+ 
+-		XEmitter emitter(writable);
++		XEmitter emitter(GetBasePtr() + offset, writable);
+ 		emitter.MOV(32, R(SCRATCH1), Imm32(pc));
+ 		emitter.JMP(dispatcherPCInSCRATCH1_, true);
+ 		int bytesWritten = (int)(emitter.GetWritableCodePtr() - writable);
+diff --git a/GPU/Software/RasterizerRegCache.cpp b/GPU/Software/RasterizerRegCache.cpp
+index 52ef2ae..fb44bec 100644
+--- a/GPU/Software/RasterizerRegCache.cpp
++++ b/GPU/Software/RasterizerRegCache.cpp
+@@ -499,7 +499,7 @@ const u8 *CodeBlock::WriteFinalizedEpilog() {
+ 
+ 	if (prologChange) {
+ 		// Okay, now let's rewrite the prolog since we didn't need all those regs.
+-		XEmitter prolog(prologPtr);
++		XEmitter prolog(GetCodePtrFromWritablePtr(prologPtr), prologPtr);
+ 		if (PlatformIsWXExclusive()) {
+ 			ProtectMemoryPages(prologPtr, 128, MEM_PROT_READ | MEM_PROT_WRITE);
+ 		}
+@@ -540,7 +540,7 @@ const u8 *CodeBlock::WriteFinalizedEpilog() {
+ 	_assert_msg_(false, "Not yet implemented");
+ #endif
+ 
+-	return prologPtr;
++	return GetCodePtrFromWritablePtr(prologPtr);
+ }
+ 
+ RegCache::Reg CodeBlock::GetZeroVec() {
+-- 
+2.43.0
+

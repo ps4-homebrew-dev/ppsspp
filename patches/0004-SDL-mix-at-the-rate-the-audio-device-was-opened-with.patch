@@ -1,7 +1,7 @@
 From fc0f3533b1a8b5d8b0a8e5a7e2b7d42263f8673e Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
 Date: Fri, 23 Oct 2026 19:42:56 +0000
-Subject: [PATCH 4/9] SDL: mix at the rate the audio device was opened with
+Subject: [PATCH 04/12] SDL: mix at the rate the audio device was opened with
 
 The device is opened with SDL_AUDIO_ALLOW_FREQUENCY_CHANGE, so SDL hands
 back whatever rate the driver runs at without converting, but NativeMix()

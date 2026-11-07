@@ -1,7 +1,7 @@
 From ef7c5317c499d1b22b049316490e5841448f5c6b Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
 Date: Tue, 20 Oct 2026 10:45:41 +0000
-Subject: [PATCH 5/9] SDL: Vulkan on a whole display when SDL has no window
+Subject: [PATCH 05/12] SDL: Vulkan on a whole display when SDL has no window
  manager info
 
 SDL video drivers that draw on a whole display, such as the PS4's, have

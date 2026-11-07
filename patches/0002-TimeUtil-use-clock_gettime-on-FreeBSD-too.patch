@@ -1,7 +1,7 @@
 From 6cdb9a941f1620d39a5aab4d3f5be83aa25346a7 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
 Date: Tue, 20 Oct 2026 11:41:59 +0000
-Subject: [PATCH 2/9] TimeUtil: use clock_gettime() on FreeBSD too
+Subject: [PATCH 02/12] TimeUtil: use clock_gettime() on FreeBSD too
 
 FreeBSD fell through to the fallback, whose Instant starts from
 gettimeofday() (wall clock) but measures against CLOCK_MONOTONIC

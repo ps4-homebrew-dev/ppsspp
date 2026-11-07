@@ -1,7 +1,7 @@
-From d40cb44bbcae52c9c5d108a21e70a5fe8b1de5d1 Mon Sep 17 00:00:00 2001
+From f7858d7125a3f615f9668fd749bd312952aaffa7 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
 Date: Sat, 7 Nov 2026 14:55:00 +0000
-Subject: [PATCH 6/9] Add PS4 (Orbis) build
+Subject: [PATCH 08/12] Add PS4 (Orbis) build
 
 Builds the SDL frontend with the PS4 homebrew SDK
 (https://github.com/ps4-homebrew-dev/sdk) and packages a pkg with
@@ -10,21 +10,27 @@ script, as for other homebrew ports.
 
 PPSSPP_PLATFORM(PS4) comes from __ORBIS__: assets and flash0 are in the
 package (/app0/assets), the memory stick and config in the title's
-storage (/temp0/ppsspp), and the file browser starts in /data. The
-window is fullscreen, as on the Switch: PPSSPP sizes its display from
-the desktop then, and VK_KHR_display has the desktop's mode only. Vulkan
-(Mesa's RADV) is the default backend: OpenGL there is zink on top of the
-same driver.
+storage (/temp0/ppsspp), and the file browser starts in /data, or
+on the USB drive where there is none (PS4 apps on the PS5).
+GetExeDirectory() is /app0, where apps always are, without asking the
+kernel: the PS5 doesn't allow KERN_PROC_PATHNAME for PS4 apps, and
+without the assets the UI crashed there.
+
+The window is fullscreen, as on the Switch: PPSSPP sizes its display
+from the desktop then, and VK_KHR_display has the desktop's mode only.
+Vulkan (Mesa's RADV) is the default backend: OpenGL there is zink on top
+of the same driver.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01P3uAWaEfvY2JvhAv7RuSyc
 ---
- CMakeLists.txt   | 19 +++++++++++++++++++
- Core/Config.cpp  |  3 +++
- SDL/SDLMain.cpp  |  4 +++-
- UI/NativeApp.cpp |  6 ++++++
- ppsspp_config.h  |  2 ++
- 5 files changed, 33 insertions(+), 1 deletion(-)
+ CMakeLists.txt           | 19 +++++++++++++++++++
+ Common/File/FileUtil.cpp |  4 ++++
+ Core/Config.cpp          |  3 +++
+ SDL/SDLMain.cpp          |  4 +++-
+ UI/NativeApp.cpp         |  7 +++++++
+ ppsspp_config.h          |  2 ++
+ 6 files changed, 38 insertions(+), 1 deletion(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index 910f322..1743fc2 100644
@@ -56,6 +62,21 @@ index 910f322..1743fc2 100644
  if(UNIX AND NOT ANDROID AND NOT APPLE)
  	configure_file(
  		"${CMAKE_SOURCE_DIR}/ppsspp.desktop.in"
+diff --git a/Common/File/FileUtil.cpp b/Common/File/FileUtil.cpp
+index 53a86f5..fa8c715 100644
+--- a/Common/File/FileUtil.cpp
++++ b/Common/File/FileUtil.cpp
+@@ -1180,6 +1180,10 @@ const Path &GetExeDirectory() {
+ 			program_path.resize(sz);
+ 		ExePath = Path(program_path);
+ 
++#elif PPSSPP_PLATFORM(PS4)
++		// Apps are always /app0/eboot.bin, and the PS5 doesn't allow
++		// KERN_PROC_PATHNAME for PS4 apps.
++		ExePath = Path("/app0");
+ #elif (defined(__APPLE__) && !PPSSPP_PLATFORM(IOS)) || defined(__linux__) || defined(KERN_PROC_PATHNAME)
+ 		char program_path[4096]{};
+ 		uint32_t program_path_size = sizeof(program_path) - 1;
 diff --git a/Core/Config.cpp b/Core/Config.cpp
 index e7fd30d..35e91bb 100644
 --- a/Core/Config.cpp
@@ -93,10 +114,10 @@ index 11acc66..73a2e06 100644
  	const char *the_path = getenv("HOME");
  	if (!the_path) {
 diff --git a/UI/NativeApp.cpp b/UI/NativeApp.cpp
-index 4a26924..dd57040 100644
+index 4a26924..052da3d 100644
 --- a/UI/NativeApp.cpp
 +++ b/UI/NativeApp.cpp
-@@ -467,6 +467,12 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
+@@ -467,6 +467,13 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
  #elif PPSSPP_PLATFORM(MAC)
  	g_Config.memStickDirectory = DarwinFileSystemServices::appropriateMemoryStickDirectoryToUse();
  	g_Config.flash0Directory = Path(external_dir) / "flash0";
@@ -105,7 +126,8 @@ index 4a26924..dd57040 100644
 +	// without a jailbreak. The package itself is read-only.
 +	g_Config.memStickDirectory = Path(savegame_dir);
 +	g_Config.flash0Directory = Path("/app0/assets/flash0");
-+	g_Config.defaultCurrentDirectory = Path("/data");
++	// PS4 apps on the PS5 have no /data: start on the USB drive there.
++	g_Config.defaultCurrentDirectory = File::IsDirectory(Path("/data")) ? Path("/data") : Path("/mnt/usb0");
  #elif PPSSPP_PLATFORM(SWITCH)
  	g_Config.memStickDirectory = g_Config.internalDataDirectory / "config/ppsspp";
  	g_Config.flash0Directory = g_Config.internalDataDirectory / "assets/flash0";

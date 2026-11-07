@@ -1,7 +1,7 @@
-From 91d1494be1ceab012cf85961cb3a30edd3ac202e Mon Sep 17 00:00:00 2001
+From ee70436dd1fa6bc28b1f9105f9fc342e095bdbb7 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
 Date: Tue, 20 Oct 2026 11:41:24 +0000
-Subject: [PATCH 7/9] SDL: no fork()ed helpers on the PS4
+Subject: [PATCH 09/12] SDL: no fork()ed helpers on the PS4
 
 portable-file-dialogs finds zenity, kdialog and the like by fork()ing and
 running /bin/sh, and OpenFileInEditor and the URL handlers run xdg-open

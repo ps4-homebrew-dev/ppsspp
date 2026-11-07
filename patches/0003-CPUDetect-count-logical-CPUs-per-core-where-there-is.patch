@@ -1,8 +1,8 @@
 From 9f020ae620fc0e628f5822b8a2e649a40454f5c3 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
 Date: Tue, 20 Oct 2026 11:29:17 +0000
-Subject: [PATCH 3/9] CPUDetect: count logical CPUs per core where there is no
- OS API
+Subject: [PATCH 03/12] CPUDetect: count logical CPUs per core where there is
+ no OS API
 
 On x86, CPUID leaf 1 gives the logical processors per package. The
 Windows, Linux and macOS paths then use the OS's topology and divide by

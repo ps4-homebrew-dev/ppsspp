@@ -1,7 +1,7 @@
-From a55edae493689e590f73ed254cb44e80bb8aae84 Mon Sep 17 00:00:00 2001
+From a48e8051c49fb1921f3fc37a02bd084c041a1fc9 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
 Date: Fri, 23 Oct 2026 20:39:03 +0000
-Subject: [PATCH 9/9] MemArena: reserve the address space with the kernel on
+Subject: [PATCH 11/12] MemArena: reserve the address space with the kernel on
  the PS4
 
 The PS4 refuses large PROT_NONE mappings (EINVAL), so Find4GBBase() fell

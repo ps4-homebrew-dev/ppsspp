@@ -1,7 +1,7 @@
-From 73a3fd32ac9eaf2bc7e2d4d1274031b1937c18dd Mon Sep 17 00:00:00 2001
+From 2e80f4bd86a63a01aa0f42dae1816a08504c2c89 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
 Date: Tue, 20 Oct 2026 11:41:47 +0000
-Subject: [PATCH 8/9] PS4: no instance counter
+Subject: [PATCH 10/12] PS4: no instance counter
 
 The counter is a POSIX shared memory object that only a clean exit
 decrements, and the PS4 keeps those until it reboots, while PS4 apps are

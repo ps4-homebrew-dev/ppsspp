@@ -1,0 +1,33 @@
+From 34475dccf72956e3e21f9a7a8aa16a9c28915c8f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
+Date: Sat, 7 Nov 2026 20:38:44 +0000
+Subject: [PATCH 06/12] GameBrowser: don't crash on the home button without
+ HOME
+
+Path(getenv("HOME")) made a std::string from a null pointer where HOME
+isn't set (the PS4's SDL port sets only the XDG directories). Go to the
+default directory then, as the other HOME users already handle it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P3uAWaEfvY2JvhAv7RuSyc
+---
+ UI/GameBrowser.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/UI/GameBrowser.cpp b/UI/GameBrowser.cpp
+index 430fd8a..fb60327 100644
+--- a/UI/GameBrowser.cpp
++++ b/UI/GameBrowser.cpp
+@@ -623,7 +623,8 @@ Path GameBrowser::HomePath() {
+ #if PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(SWITCH) || defined(USING_WIN_UI) || PPSSPP_PLATFORM(UWP) || PPSSPP_PLATFORM(IOS)
+ 	return g_Config.memStickDirectory;
+ #else
+-	return Path(getenv("HOME"));
++	const char *home = getenv("HOME");
++	return home ? Path(home) : g_Config.defaultCurrentDirectory;
+ #endif
+ }
+ 
+-- 
+2.43.0
+
