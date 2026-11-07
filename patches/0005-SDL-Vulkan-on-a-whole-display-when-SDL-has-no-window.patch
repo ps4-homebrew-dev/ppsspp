@@ -1,0 +1,47 @@
+From ef7c5317c499d1b22b049316490e5841448f5c6b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
+Date: Tue, 20 Oct 2026 10:45:41 +0000
+Subject: [PATCH 5/9] SDL: Vulkan on a whole display when SDL has no window
+ manager info
+
+SDL video drivers that draw on a whole display, such as the PS4's, have
+no window manager info, so SDL_GetWindowWMInfo() fails there. With
+VK_USE_PLATFORM_DISPLAY_KHR, use the VK_KHR_display surface then, as for
+KMSDRM, instead of exiting.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P3uAWaEfvY2JvhAv7RuSyc
+---
+ SDL/SDLVulkanGraphicsContext.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/SDL/SDLVulkanGraphicsContext.cpp b/SDL/SDLVulkanGraphicsContext.cpp
+index 47d0569..96838ef 100644
+--- a/SDL/SDLVulkanGraphicsContext.cpp
++++ b/SDL/SDLVulkanGraphicsContext.cpp
+@@ -84,8 +84,14 @@ bool SDLVulkanGraphicsContext::Init(SDL_Window *&window, int x, int y, int w, in
+ 	SDL_SysWMinfo sys_info{};
+ 	SDL_VERSION(&sys_info.version); //Set SDL version
+ 	if (!SDL_GetWindowWMInfo(window, &sys_info)) {
++#if defined(VK_USE_PLATFORM_DISPLAY_KHR)
++		// Video drivers without window manager info (such as the PS4's)
++		// show the window on a whole display: use VK_KHR_display.
++		sys_info.subsystem = SDL_SYSWM_UNKNOWN;
++#else
+ 		fprintf(stderr, "Error getting SDL window wm info: %s\n", SDL_GetError());
+ 		exit(1);
++#endif
+ 	}
+ 	switch (sys_info.subsystem) {
+ 	case SDL_SYSWM_X11:
+@@ -114,6 +120,7 @@ bool SDLVulkanGraphicsContext::Init(SDL_Window *&window, int x, int y, int w, in
+ #endif
+ #endif
+ #if defined(VK_USE_PLATFORM_DISPLAY_KHR)
++	case SDL_SYSWM_UNKNOWN:
+ 	case SDL_SYSWM_KMSDRM:
+ 		/*
+ 		There is no problem passing null for the next two arguments, and reinit will be called later
+-- 
+2.43.0
+

@@ -1,0 +1,97 @@
+From a55edae493689e590f73ed254cb44e80bb8aae84 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
+Date: Fri, 23 Oct 2026 20:39:03 +0000
+Subject: [PATCH 9/9] MemArena: reserve the address space with the kernel on
+ the PS4
+
+The PS4 refuses large PROT_NONE mappings (EINVAL), so Find4GBBase() fell
+back to its hardcoded pointer, and the views were mapped there with
+MAP_FIXED over whatever the process already had, such as the GPU
+driver's mappings: "Memory init failed", or worse.
+
+Reserve the space with sceKernelReserveVirtualRange() instead, the same
+way as on other platforms: 8GB, keeping the 4GB-aligned 4GB in it, or
+any 4GB (the JIT then does without pointerify). The reservation is kept
+for the life of the process: views are mapped over it and released views
+are reserved again, so nothing else is placed there between games.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P3uAWaEfvY2JvhAv7RuSyc
+---
+ Common/MemArenaPosix.cpp | 48 +++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 47 insertions(+), 1 deletion(-)
+
+diff --git a/Common/MemArenaPosix.cpp b/Common/MemArenaPosix.cpp
+index a413f4e..17686b0 100644
+--- a/Common/MemArenaPosix.cpp
++++ b/Common/MemArenaPosix.cpp
+@@ -109,6 +109,42 @@ void MemArena::ReleaseSpace() {
+ #endif
+ }
+ 
++#if PPSSPP_PLATFORM(PS4)
++// The PS4 refuses large PROT_NONE mappings, so the address space for the views
++// is reserved from the kernel instead, once for the life of the process. Views
++// are mapped over the reservation and go back to it when released, so nothing
++// else, such as the GPU driver's mappings, is ever placed there.
++extern "C" int sceKernelReserveVirtualRange(void **addr, size_t len, int flags, size_t alignment);
++extern "C" int sceKernelMunmap(void *addr, size_t len);
++static constexpr int SCE_KERNEL_MAP_FIXED = 0x10;
++static u8 *g_reservedBase;
++
++static u8 *ReserveBase() {
++	const uintptr_t FOUR_GIGS = 0x100000000ULL;
++	const size_t ALIGNMENT = 0x10000;
++	// As below: grab 8GB to get an aligned 4GB, and give back the rest.
++	void *p = nullptr;
++	int err8 = sceKernelReserveVirtualRange(&p, 2 * FOUR_GIGS, 0, ALIGNMENT);
++	if (err8 == 0) {
++		uintptr_t start = (uintptr_t)p;
++		uintptr_t base = (start + FOUR_GIGS - 1) & ~(FOUR_GIGS - 1);
++		uintptr_t end = start + 2 * FOUR_GIGS;
++		if (base > start)
++			sceKernelMunmap((void *)start, base - start);
++		if (end > base + FOUR_GIGS)
++			sceKernelMunmap((void *)(base + FOUR_GIGS), end - (base + FOUR_GIGS));
++		return (u8 *)base;
++	}
++	// Any 4GB will do, the JIT just does without pointerify then.
++	p = nullptr;
++	int err4 = sceKernelReserveVirtualRange(&p, FOUR_GIGS, 0, ALIGNMENT);
++	if (err4 == 0)
++		return (u8 *)p;
++	ERROR_LOG(Log::MemMap, "Failed to reserve address space: %08x (8GB), %08x (4GB)", (u32)err8, (u32)err4);
++	return nullptr;
++}
++#endif
++
+ void *MemArena::CreateView(s64 offset, size_t size, void *base)
+ {
+ #ifdef NO_MMAP
+@@ -132,12 +168,22 @@ void *MemArena::CreateView(s64 offset, size_t size, void *base)
+ void MemArena::ReleaseView(s64 offset, void* view, size_t size) {
+ #ifndef NO_MMAP
+ 	munmap(view, size);
++#if PPSSPP_PLATFORM(PS4)
++	void *p = view;
++	sceKernelReserveVirtualRange(&p, size, SCE_KERNEL_MAP_FIXED, 0);
++#endif
+ #endif
+ }
+ 
+ u8* MemArena::Find4GBBase() {
+ 	// Now, create views in high memory where there's plenty of space.
+-#if PPSSPP_ARCH(64BIT) && !defined(USE_ASAN) && !defined(NO_MMAP)
++#if PPSSPP_PLATFORM(PS4)
++	if (!g_reservedBase) {
++		g_reservedBase = ReserveBase();
++		INFO_LOG(Log::MemMap, "base: %p", g_reservedBase);
++	}
++	return g_reservedBase;
++#elif PPSSPP_ARCH(64BIT) && !defined(USE_ASAN) && !defined(NO_MMAP)
+ 	// We should probably just go look in /proc/self/maps for some free space.
+ 	// But let's try the anonymous mmap trick, just like on 32-bit, but bigger and
+ 	// aligned to 4GB for the movk trick. We can ensure that we get an aligned 4GB
+-- 
+2.43.0
+

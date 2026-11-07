@@ -1,0 +1,63 @@
+From 9f020ae620fc0e628f5822b8a2e649a40454f5c3 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
+Date: Tue, 20 Oct 2026 11:29:17 +0000
+Subject: [PATCH 3/9] CPUDetect: count logical CPUs per core where there is no
+ OS API
+
+On x86, CPUID leaf 1 gives the logical processors per package. The
+Windows, Linux and macOS paths then use the OS's topology and divide by
+the cores, but elsewhere (FreeBSD, the PS4) the per-package count was
+kept as the per-core one, so the thread manager started cores x threads:
+128 threads on the PS4's 8-core Jaguar. Divide there too, unless the
+Intel leaf 0xB or leaf 4 paths already gave a per-core count.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P3uAWaEfvY2JvhAv7RuSyc
+---
+ Common/CPUDetect.cpp | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/Common/CPUDetect.cpp b/Common/CPUDetect.cpp
+index f45ef3c..70765a0 100644
+--- a/Common/CPUDetect.cpp
++++ b/Common/CPUDetect.cpp
+@@ -331,6 +331,8 @@ void CPUInfo::Detect() {
+ 	}
+ 
+ 	num_cores = (logical_cpu_count == 0) ? 1 : logical_cpu_count;
++	// Until the Intel paths below make it per core, logical_cpu_count is per package.
++	bool logicalPerCore = false;
+ 
+ 	if (max_ex_fn >= 0x80000008) {
+ 		// Get number of cores. This is a bit complicated. Following AMD manual here.
+@@ -349,6 +351,7 @@ void CPUInfo::Detect() {
+ 						int totalThreads = cpu_id[1] & 0xFFFF;
+ 						num_cores = totalThreads / logical_cpu_count;
+ 						hasLeafB = true;
++						logicalPerCore = true;
+ 					}
+ 				}
+ 				// Old new mechanism for modern Intel CPUs.
+@@ -359,6 +362,7 @@ void CPUInfo::Detect() {
+ 					cores_x_package = ((logical_cpu_count % cores_x_package) == 0) ? cores_x_package : 1;
+ 					num_cores = (cores_x_package > 1) ? cores_x_package : num_cores;
+ 					logical_cpu_count /= cores_x_package;
++					logicalPerCore = true;
+ 				}
+ 			}
+ 		} else {
+@@ -465,6 +469,11 @@ void CPUInfo::Detect() {
+ 			logical_cpu_count = num / std::max(num_cores, 1);
+ 		}
+ 	}
++#else
++	// No OS API here (FreeBSD, the PS4...): make the CPUID count per core,
++	// or every core is counted as many times as the package has threads.
++	if (!logicalPerCore)
++		logical_cpu_count /= std::max(num_cores, 1);
+ #endif
+ 	if (logical_cpu_count <= 0)
+ 		logical_cpu_count = 1;
+-- 
+2.43.0
+

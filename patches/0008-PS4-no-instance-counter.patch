@@ -1,0 +1,60 @@
+From 73a3fd32ac9eaf2bc7e2d4d1274031b1937c18dd Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
+Date: Tue, 20 Oct 2026 11:41:47 +0000
+Subject: [PATCH 8/9] PS4: no instance counter
+
+The counter is a POSIX shared memory object that only a clean exit
+decrements, and the PS4 keeps those until it reboots, while PS4 apps are
+usually closed from the system menu or crash. A few runs in, every start
+was a "secondary instance": no sound and no saved settings. The PS4 runs
+one instance of an app at a time, so do without, as on Android and Switch.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P3uAWaEfvY2JvhAv7RuSyc
+---
+ Core/Instance.cpp | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/Core/Instance.cpp b/Core/Instance.cpp
+index fcb350f..52731d1 100644
+--- a/Core/Instance.cpp
++++ b/Core/Instance.cpp
+@@ -18,7 +18,7 @@
+ #include "ppsspp_config.h"
+ #include "Core/Instance.h"
+ 
+-#if !PPSSPP_PLATFORM(WINDOWS) && !PPSSPP_PLATFORM(ANDROID) && !defined(__LIBRETRO__) && !PPSSPP_PLATFORM(SWITCH)
++#if !PPSSPP_PLATFORM(WINDOWS) && !PPSSPP_PLATFORM(ANDROID) && !defined(__LIBRETRO__) && !PPSSPP_PLATFORM(SWITCH) && !PPSSPP_PLATFORM(PS4)
+ #include <unistd.h>
+ #include <sys/types.h>
+ #include <sys/mman.h>
+@@ -81,7 +81,7 @@ static bool UpdateInstanceCounter(void (*callback)(volatile InstanceInfo *)) {
+ 	UnmapViewOfFile(buf);
+ 
+ 	return result;
+-#elif PPSSPP_PLATFORM(ANDROID) || defined(__LIBRETRO__) || PPSSPP_PLATFORM(SWITCH)
++#elif PPSSPP_PLATFORM(ANDROID) || defined(__LIBRETRO__) || PPSSPP_PLATFORM(SWITCH) || PPSSPP_PLATFORM(PS4)
+ 	// TODO: replace shm_open & shm_unlink with ashmem or android-shmem
+ 	return false;
+ #else
+@@ -142,7 +142,7 @@ void InitInstanceCounter() {
+ 		PPSSPP_ID = 1;
+ 		return;
+ 	}
+-#elif PPSSPP_PLATFORM(ANDROID) || defined(__LIBRETRO__) || PPSSPP_PLATFORM(SWITCH)
++#elif PPSSPP_PLATFORM(ANDROID) || defined(__LIBRETRO__) || PPSSPP_PLATFORM(SWITCH) || PPSSPP_PLATFORM(PS4)
+ 	// TODO : replace shm_open & shm_unlink with ashmem or android-shmem
+ #else
+ 	// Create shared memory object
+@@ -179,7 +179,7 @@ void ShutdownInstanceCounter() {
+ 		CloseHandle(mapLock);
+ 		mapLock = nullptr;
+ 	}
+-#elif PPSSPP_PLATFORM(ANDROID) || defined(__LIBRETRO__) || PPSSPP_PLATFORM(SWITCH)
++#elif PPSSPP_PLATFORM(ANDROID) || defined(__LIBRETRO__) || PPSSPP_PLATFORM(SWITCH) || PPSSPP_PLATFORM(PS4)
+ 	// Do nothing
+ #else
+ 	if (hIDMapFile >= 0) {
+-- 
+2.43.0
+

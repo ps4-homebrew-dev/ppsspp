@@ -1,0 +1,127 @@
+From d40cb44bbcae52c9c5d108a21e70a5fe8b1de5d1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
+Date: Sat, 7 Nov 2026 14:55:00 +0000
+Subject: [PATCH 6/9] Add PS4 (Orbis) build
+
+Builds the SDL frontend with the PS4 homebrew SDK
+(https://github.com/ps4-homebrew-dev/sdk) and packages a pkg with
+orbis_add_pkg(). The package's images (sce_sys/) come from the PS4 build
+script, as for other homebrew ports.
+
+PPSSPP_PLATFORM(PS4) comes from __ORBIS__: assets and flash0 are in the
+package (/app0/assets), the memory stick and config in the title's
+storage (/temp0/ppsspp), and the file browser starts in /data. The
+window is fullscreen, as on the Switch: PPSSPP sizes its display from
+the desktop then, and VK_KHR_display has the desktop's mode only. Vulkan
+(Mesa's RADV) is the default backend: OpenGL there is zink on top of the
+same driver.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P3uAWaEfvY2JvhAv7RuSyc
+---
+ CMakeLists.txt   | 19 +++++++++++++++++++
+ Core/Config.cpp  |  3 +++
+ SDL/SDLMain.cpp  |  4 +++-
+ UI/NativeApp.cpp |  6 ++++++
+ ppsspp_config.h  |  2 ++
+ 5 files changed, 33 insertions(+), 1 deletion(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 910f322..1743fc2 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -3252,6 +3252,25 @@ if(MACOSX AND NOT IOS)
+ 	endif()
+ endif()
+ 
++if(ORBIS AND TargetBin)
++	# The PS4 package, with the PS4 homebrew SDK. SDL_main.h turns main() into
++	# SDL_main() there, which SDL2main's main() calls. sce_sys/ (icon0.png,
++	# pic0.png, pic1.png) is not in the repository: the PS4 build script puts
++	# it in the source directory.
++	target_link_libraries(${TargetBin} SDL2::SDL2main)
++	find_package(PkgConfig REQUIRED)
++	pkg_check_modules(EGL REQUIRED egl)
++	orbis_add_pkg(${TargetBin}
++		TITLE PPSSPP
++		TITLE_ID PPSS00001
++		CONTENT_ID IV0000-PPSS00001_00-PPSSPPHOMEBREW00
++		VERSION 1.20
++		# 0x2 | 0x10000 (7 CPU mode) | 0x800000 (PS4 Pro mode)
++		ATTRIBUTE 8454146
++		ASSETS sce_sys assets
++		MODULES libEGL.so.1 libGLESv2.so.2 libgallium-${EGL_VERSION}.so libvulkan.so.1)
++endif()
++
+ if(UNIX AND NOT ANDROID AND NOT APPLE)
+ 	configure_file(
+ 		"${CMAKE_SOURCE_DIR}/ppsspp.desktop.in"
+diff --git a/Core/Config.cpp b/Core/Config.cpp
+index e7fd30d..35e91bb 100644
+--- a/Core/Config.cpp
++++ b/Core/Config.cpp
+@@ -517,6 +517,9 @@ static int DefaultGPUBackend() {
+ 
+ #elif PPSSPP_PLATFORM(IOS_APP_STORE)
+ 	return (int)GPUBackend::VULKAN;
++#elif PPSSPP_PLATFORM(PS4)
++	// OpenGL is zink there, on top of the same Vulkan driver (RADV).
++	return (int)GPUBackend::VULKAN;
+ #endif
+ 
+ 	// TODO: On some additional Linux platforms, we should also default to Vulkan.
+diff --git a/SDL/SDLMain.cpp b/SDL/SDLMain.cpp
+index 11acc66..73a2e06 100644
+--- a/SDL/SDLMain.cpp
++++ b/SDL/SDLMain.cpp
+@@ -1590,7 +1590,7 @@ int main(int argc, char *argv[]) {
+ 	// If we're on mobile, don't try for windowed either.
+ #if defined(MOBILE_DEVICE) && !PPSSPP_PLATFORM(SWITCH)
+ 	mode |= SDL_WINDOW_FULLSCREEN;
+-#elif defined(USING_FBDEV) || PPSSPP_PLATFORM(SWITCH)
++#elif defined(USING_FBDEV) || PPSSPP_PLATFORM(SWITCH) || PPSSPP_PLATFORM(PS4)
+ 	mode |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+ #else
+ 	mode |= SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
+@@ -1632,6 +1632,8 @@ int main(int argc, char *argv[]) {
+ 	char path[2048];
+ #if PPSSPP_PLATFORM(SWITCH)
+ 	strcpy(path, "/switch/ppsspp/");
++#elif PPSSPP_PLATFORM(PS4)
++	strcpy(path, "/temp0/ppsspp/");
+ #else
+ 	const char *the_path = getenv("HOME");
+ 	if (!the_path) {
+diff --git a/UI/NativeApp.cpp b/UI/NativeApp.cpp
+index 4a26924..dd57040 100644
+--- a/UI/NativeApp.cpp
++++ b/UI/NativeApp.cpp
+@@ -467,6 +467,12 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
+ #elif PPSSPP_PLATFORM(MAC)
+ 	g_Config.memStickDirectory = DarwinFileSystemServices::appropriateMemoryStickDirectoryToUse();
+ 	g_Config.flash0Directory = Path(external_dir) / "flash0";
++#elif PPSSPP_PLATFORM(PS4)
++	// savegame_dir is /temp0/ppsspp/: the title's own storage, writable
++	// without a jailbreak. The package itself is read-only.
++	g_Config.memStickDirectory = Path(savegame_dir);
++	g_Config.flash0Directory = Path("/app0/assets/flash0");
++	g_Config.defaultCurrentDirectory = Path("/data");
+ #elif PPSSPP_PLATFORM(SWITCH)
+ 	g_Config.memStickDirectory = g_Config.internalDataDirectory / "config/ppsspp";
+ 	g_Config.flash0Directory = g_Config.internalDataDirectory / "assets/flash0";
+diff --git a/ppsspp_config.h b/ppsspp_config.h
+index faef7e4..5a3b721 100644
+--- a/ppsspp_config.h
++++ b/ppsspp_config.h
+@@ -117,6 +117,8 @@
+     #endif
+ #elif defined(__SWITCH__)
+     #define PPSSPP_PLATFORM_SWITCH 1
++#elif defined(__ORBIS__)
++    #define PPSSPP_PLATFORM_PS4 1
+ #elif defined(__ANDROID__)
+     #define PPSSPP_PLATFORM_ANDROID 1
+     #define PPSSPP_PLATFORM_LINUX 1
+-- 
+2.43.0
+

@@ -1,0 +1,37 @@
+From fc0f3533b1a8b5d8b0a8e5a7e2b7d42263f8673e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
+Date: Fri, 23 Oct 2026 19:42:56 +0000
+Subject: [PATCH 4/9] SDL: mix at the rate the audio device was opened with
+
+The device is opened with SDL_AUDIO_ALLOW_FREQUENCY_CHANGE, so SDL hands
+back whatever rate the driver runs at without converting, but NativeMix()
+kept being told 44100. On a 48 kHz-only device (the PS4) the mixer then
+produced 8% too few samples for each callback: underruns, heard as
+crackling, and audio pitched up.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01P3uAWaEfvY2JvhAv7RuSyc
+---
+ SDL/SDLMain.cpp | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/SDL/SDLMain.cpp b/SDL/SDLMain.cpp
+index 6853525..11acc66 100644
+--- a/SDL/SDLMain.cpp
++++ b/SDL/SDLMain.cpp
+@@ -197,6 +197,12 @@ static void InitSDLAudioDevice(const std::string &name = "") {
+ 			ERROR_LOG(Log::Audio, "Provided output format does not match requirement, turning audio off");
+ 			SDL_CloseAudioDevice(audioDev);
+ 		}
++		// SDL_AUDIO_ALLOW_FREQUENCY_CHANGE: SDL does not convert, so mix at
++		// the rate the device actually runs at.
++		if (g_retFmt.freq != g_sampleRate) {
++			INFO_LOG(Log::Audio, "Output audio freq: %d (requested: %d)", g_retFmt.freq, fmt.freq);
++			g_sampleRate = g_retFmt.freq;
++		}
+ 		SDL_PauseAudioDevice(audioDev, 0);
+ 	}
+ }
+-- 
+2.43.0
+
