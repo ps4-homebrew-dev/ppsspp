@@ -17,6 +17,21 @@ if [[ -z "$PS4_HOMEBREW_SDK" ]]; then
     exit 1
 fi
 
+if ! compgen -G "${PATCHDIR}/*.patch" >/dev/null; then
+    echo "error: no patches in ${PATCHDIR}"
+    exit 1
+fi
+
+if [[ ! -d "${ASSETDIR}" ]]; then
+    echo "error: ${ASSETDIR} not found"
+    exit 1
+fi
+
+if ! command -v git >/dev/null; then
+    echo "error: git is not installed"
+    exit 1
+fi
+
 source "${PS4_HOMEBREW_SDK}/toolchain/orbis.sh" || exit 1
 
 TEMPDIR=$(mktemp -d)
