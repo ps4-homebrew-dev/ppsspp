@@ -26,7 +26,8 @@ revision (the patches may need updating for it).
 
 ## Usage
 - Put your games on USB.
-- Saves and settings are kept in `/temp0/ppsspp`.
+- Saves and settings are kept in `/download0/ppsspp`. Earlier versions used
+  `/temp0/ppsspp`, which is not carried over.
 - Vulkan is the default graphics backend.
 - On a PS4 Pro, PPSSPP runs in Pro mode.
 

@@ -1,4 +1,4 @@
-From f7858d7125a3f615f9668fd749bd312952aaffa7 Mon Sep 17 00:00:00 2001
+From ec977ef77db4430d46764dcb219306d241db5fd7 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?John=20T=C3=B6rnblom?= <john.tornblom@gmail.com>
 Date: Sat, 7 Nov 2026 14:55:00 +0000
 Subject: [PATCH 08/12] Add PS4 (Orbis) build
@@ -10,8 +10,11 @@ script, as for other homebrew ports.
 
 PPSSPP_PLATFORM(PS4) comes from __ORBIS__: assets and flash0 are in the
 package (/app0/assets), the memory stick and config in the title's
-storage (/temp0/ppsspp), and the file browser starts in /data, or
-on the USB drive where there is none (PS4 apps on the PS5).
+download data (/download0/ppsspp, 1 GiB, which SDL2main mounts and which
+persists across reboots), and the file browser starts in /data,
+or on the USB drive where there is none (PS4 apps on the PS5). Mesa's
+shader cache, in the download data too, is held to 256 MiB, so that it
+cannot fill it.
 GetExeDirectory() is /app0, where apps always are, without asking the
 kernel: the PS5 doesn't allow KERN_PROC_PATHNAME for PS4 apps, and
 without the assets the UI crashed there.
@@ -24,19 +27,19 @@ of the same driver.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01P3uAWaEfvY2JvhAv7RuSyc
 ---
- CMakeLists.txt           | 19 +++++++++++++++++++
+ CMakeLists.txt           | 22 ++++++++++++++++++++++
  Common/File/FileUtil.cpp |  4 ++++
  Core/Config.cpp          |  3 +++
- SDL/SDLMain.cpp          |  4 +++-
- UI/NativeApp.cpp         |  7 +++++++
+ SDL/SDLMain.cpp          | 10 +++++++++-
+ UI/NativeApp.cpp         |  8 ++++++++
  ppsspp_config.h          |  2 ++
- 6 files changed, 38 insertions(+), 1 deletion(-)
+ 6 files changed, 48 insertions(+), 1 deletion(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 910f322..1743fc2 100644
+index 910f322..5bd9a20 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -3252,6 +3252,25 @@ if(MACOSX AND NOT IOS)
+@@ -3252,6 +3252,28 @@ if(MACOSX AND NOT IOS)
  	endif()
  endif()
  
@@ -55,6 +58,9 @@ index 910f322..1743fc2 100644
 +		VERSION 1.20
 +		# 0x2 | 0x10000 (7 CPU mode) | 0x800000 (PS4 Pro mode)
 +		ATTRIBUTE 8454146
++		# The download data, /download0 (MiB): the memory stick and the
++		# settings, which SDL2main mounts.
++		DOWNLOAD_DATA_SIZE 1024
 +		ASSETS sce_sys assets
 +		MODULES libEGL.so.1 libGLESv2.so.2 libgallium-${EGL_VERSION}.so libvulkan.so.1)
 +endif()
@@ -92,10 +98,23 @@ index e7fd30d..35e91bb 100644
  
  	// TODO: On some additional Linux platforms, we should also default to Vulkan.
 diff --git a/SDL/SDLMain.cpp b/SDL/SDLMain.cpp
-index 11acc66..73a2e06 100644
+index 11acc66..9c607ef 100644
 --- a/SDL/SDLMain.cpp
 +++ b/SDL/SDLMain.cpp
-@@ -1590,7 +1590,7 @@ int main(int argc, char *argv[]) {
+@@ -1436,6 +1436,12 @@ int main(int argc, char *argv[]) {
+ 
+ 	g_logManager.EnableOutput(LogOutput::Stdio);
+ 
++#if PPSSPP_PLATFORM(PS4)
++	// Mesa's shader cache is in the download data too ($XDG_CACHE_HOME), and
++	// may grow to 1 GiB by default: keep room for the saves.
++	setenv("MESA_SHADER_CACHE_MAX_SIZE", "256M", 0);
++#endif
++
+ #ifdef HAVE_LIBNX
+ 	socketInitializeDefault();
+ 	nxlinkStdio();
+@@ -1590,7 +1596,7 @@ int main(int argc, char *argv[]) {
  	// If we're on mobile, don't try for windowed either.
  #if defined(MOBILE_DEVICE) && !PPSSPP_PLATFORM(SWITCH)
  	mode |= SDL_WINDOW_FULLSCREEN;
@@ -104,26 +123,27 @@ index 11acc66..73a2e06 100644
  	mode |= SDL_WINDOW_FULLSCREEN_DESKTOP;
  #else
  	mode |= SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
-@@ -1632,6 +1632,8 @@ int main(int argc, char *argv[]) {
+@@ -1632,6 +1638,8 @@ int main(int argc, char *argv[]) {
  	char path[2048];
  #if PPSSPP_PLATFORM(SWITCH)
  	strcpy(path, "/switch/ppsspp/");
 +#elif PPSSPP_PLATFORM(PS4)
-+	strcpy(path, "/temp0/ppsspp/");
++	strcpy(path, "/download0/ppsspp/");
  #else
  	const char *the_path = getenv("HOME");
  	if (!the_path) {
 diff --git a/UI/NativeApp.cpp b/UI/NativeApp.cpp
-index 4a26924..052da3d 100644
+index 4a26924..25c5ad8 100644
 --- a/UI/NativeApp.cpp
 +++ b/UI/NativeApp.cpp
-@@ -467,6 +467,13 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
+@@ -467,6 +467,14 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
  #elif PPSSPP_PLATFORM(MAC)
  	g_Config.memStickDirectory = DarwinFileSystemServices::appropriateMemoryStickDirectoryToUse();
  	g_Config.flash0Directory = Path(external_dir) / "flash0";
 +#elif PPSSPP_PLATFORM(PS4)
-+	// savegame_dir is /temp0/ppsspp/: the title's own storage, writable
-+	// without a jailbreak. The package itself is read-only.
++	// savegame_dir is /download0/ppsspp/: the title's download data, which
++	// persists across reboots and is writable without a jailbreak.
++	// The package itself is read-only.
 +	g_Config.memStickDirectory = Path(savegame_dir);
 +	g_Config.flash0Directory = Path("/app0/assets/flash0");
 +	// PS4 apps on the PS5 have no /data: start on the USB drive there.
