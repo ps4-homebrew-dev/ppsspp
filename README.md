@@ -29,3 +29,8 @@ revision (the patches may need updating for it).
 - Saves and settings are kept in `/temp0/ppsspp`.
 - Vulkan is the default graphics backend.
 - On a PS4 Pro, PPSSPP runs in Pro mode.
+
+## License
+The patches and scripts here are under the same license as PPSSPP, the
+GNU General Public License version 2.0 or (at your option) any later
+version, see [LICENSE](LICENSE).
